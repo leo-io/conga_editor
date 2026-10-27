@@ -1,0 +1,22 @@
+# Normalize all text files to LF in the repository and on checkout,
+# so the tree is identical on Windows, macOS and Linux.
+* text=auto eol=lf
+
+# Explicitly text
+*.py      text eol=lf
+*.md      text eol=lf
+*.json    text eol=lf
+*.txt     text eol=lf
+*.cfg     text eol=lf
+*.toml    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+
+# Binary: never convert, never diff as text
+*.flac    binary
+*.wav     binary
+*.mp3     binary
+*.m4a     binary
+*.bin     binary
