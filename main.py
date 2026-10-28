@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 # Ensure this directory is at the front of sys.path
 APP_DIR = Path(__file__).resolve().parent
@@ -12,6 +12,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from pedalboard.io import AudioStream
+
 from conga_player.songmap import load_song
 
 
@@ -84,13 +85,19 @@ def list_devices() -> None:
 
 def run_selftest(song_folder: Path) -> None:
     song_map = load_song(song_folder)
+    if song_map.has_grouped_sections:
+        phrases_desc = f"{len(song_map.raw_phrases)} phrases ({len(song_map.sections)} sections)"
+        prefix = "section"
+    else:
+        phrases_desc = f"{len(song_map.phrases)} phrases"
+        prefix = "phrase"
     print(
         f"{len(song_map.beat_times_s)} beats / {len(song_map.bar_times_s)} bars / "
-        f"{len(song_map.phrases)} phrases / {song_map.bpm:.1f} BPM / {song_map.duration_s:.2f} s"
+        f"{phrases_desc} / {song_map.bpm:.1f} BPM / {song_map.duration_s:.2f} s"
     )
     if song_map.phrases:
-        print(f"First phrase: {song_map.phrases[0].label}")
-        print(f"Last phrase: {song_map.phrases[-1].label}")
+        print(f"First {prefix}: {song_map.phrases[0].label}")
+        print(f"Last {prefix}: {song_map.phrases[-1].label}")
     print(f"Audio path: {song_map.audio_path}")
 
 

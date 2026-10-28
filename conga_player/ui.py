@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional
+
 import numpy as np
 
 from conga_player.engine import Engine
 from conga_player.peaks import zoom_peaks
-from conga_player.songmap import Phrase, SongMap
+from conga_player.songmap import SongMap
 
 CANVAS_WIDTH = 1200
 
@@ -49,8 +49,8 @@ class CongaPlayerApp:
         self._zoom_win_end = 1.0
 
         # Drag state for setting loops
-        self._drag_start_t: Optional[float] = None
-        self._dragging_canvas: Optional[str] = None
+        self._drag_start_t: float | None = None
+        self._dragging_canvas: str | None = None
 
         # Build window
         self.root = tk.Tk()
@@ -147,7 +147,8 @@ class CongaPlayerApp:
             )
             btn.pack(side=tk.LEFT, padx=2)
 
-        self.btn_phrase_loop = ttk.Button(ctrl_frame, text="⟲ Phrase", width=9, command=self._on_loop_phrase)
+        loop_btn_label = "⟲ Section" if self.song_map.has_grouped_sections else "⟲ Phrase"
+        self.btn_phrase_loop = ttk.Button(ctrl_frame, text=loop_btn_label, width=9, command=self._on_loop_phrase)
         self.btn_phrase_loop.pack(side=tk.LEFT, padx=4)
 
         ttk.Separator(ctrl_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
@@ -454,8 +455,9 @@ class CongaPlayerApp:
             self.engine.set_loop_enabled(True)
 
     def _on_cycle_snap(self) -> None:
-        cur_idx = SNAP_MODES.index(self.snap_mode)
-        self.snap_mode = SNAP_MODES[(cur_idx + 1) % len(SNAP_MODES)]
+        modes = ["beat", "bar", "section", "off"] if self.song_map.has_grouped_sections else ["beat", "bar", "phrase", "off"]
+        cur_idx = modes.index(self.snap_mode) if self.snap_mode in modes else 0
+        self.snap_mode = modes[(cur_idx + 1) % len(modes)]
         self.btn_snap.config(text=f"Snap: {self.snap_mode.capitalize()}")
 
     def _on_zoom_in(self) -> None:
@@ -552,7 +554,13 @@ class CongaPlayerApp:
         beat_str = f"beat {beat_num}"
 
         p = self.song_map.phrase_at(st.position_s)
-        phrase_str = f"phrase {p.index}/{len(self.song_map.phrases)} {p.label}" if p else "phrase --"
+        if p:
+            if self.song_map.has_grouped_sections:
+                phrase_str = f"sec {p.index:02d}/{len(self.song_map.phrases):02d} {p.label} ({p.phrase_range_str})"
+            else:
+                phrase_str = f"phrase {p.index}/{len(self.song_map.phrases)} {p.label}"
+        else:
+            phrase_str = "sec --" if self.song_map.has_grouped_sections else "phrase --"
 
         if st.loop_enabled and st.loop_end_s > st.loop_start_s:
             l_start_bar = self.song_map.bar_index_at(st.loop_start_s) + 1
