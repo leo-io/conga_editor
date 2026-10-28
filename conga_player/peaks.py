@@ -3,37 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 import numpy as np
-
-if TYPE_CHECKING:
-    from conga_player.songmap import SongMap
-
-
-def overview_columns(song_map: SongMap, width: int) -> np.ndarray:
-    """Resample the stored 3-band preview to the canvas width using np.interp.
-
-    Returns:
-        np.ndarray: Shape (width, 3) float32 with columns [low, mid, high].
-    """
-    if song_map.preview_bands is None or len(song_map.preview_bands) == 0:
-        return np.zeros((width, 3), dtype=np.float32)
-
-    bands = song_map.preview_bands
-    num_orig = len(bands)
-    if width <= 0:
-        return np.zeros((0, 3), dtype=np.float32)
-    if width == num_orig:
-        return bands.astype(np.float32)
-
-    x_orig = np.linspace(0.0, 1.0, num_orig)
-    x_new = np.linspace(0.0, 1.0, width)
-
-    out = np.zeros((width, 3), dtype=np.float32)
-    for c in range(3):
-        out[:, c] = np.interp(x_new, x_orig, bands[:, c])
-
-    return out
 
 
 def zoom_peaks(
@@ -75,13 +45,12 @@ def zoom_peaks(
     if n_samples == 0:
         return np.zeros(columns, dtype=np.float32)
 
-    # Split into columns chunks and take max
-    chunks = np.array_split(mono, columns)
-    peaks = np.zeros(columns, dtype=np.float32)
-    for i, chunk in enumerate(chunks):
-        if len(chunk) > 0:
-            peaks[i] = float(np.max(chunk))
+    if n_samples >= columns:
+        edges = np.linspace(0, n_samples, columns + 1, dtype=np.intp)
+        return np.maximum.reduceat(mono, edges[:-1]).astype(np.float32)
 
+    peaks = np.zeros(columns, dtype=np.float32)
+    peaks[:n_samples] = mono
     return peaks
 
 

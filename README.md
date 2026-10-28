@@ -5,10 +5,8 @@ Beat- and phrase-mapped desktop audio player built on `pedalboard` for practisin
 ## Features
 
 - **Direct rekordbox dump ingestion**: Reads `track.json` and `_temp/track_dump.json` directly from the song directory.
-- **Beat & Bar accurate navigation**: 4-lane display:
+- **Beat & Bar accurate navigation**: 2-lane display:
   - Phrase lane (mood-aware colored phrase blocks)
-  - 3-band overview waveform with loop region shading and playhead
-  - Bar ruler with 16-bar markers
   - Zoom lane (4, 8, 16, or 32 bars) centered on the playhead with peak waveform and beat gridlines
 - **Instant looping & seeking**: Sample-exact seamless looping with automated declick fades at seam transitions.
 - **Low CPU audio feeder**: Output-only `pedalboard.io.AudioStream` with monotonic-clock feeder pacing and streaming gain processing.
@@ -61,8 +59,8 @@ python -m venv .venv
 | **←** / **→** | Seek ∓1 bar |
 | **Shift + ←** / **Shift + →** | Seek ∓1 beat |
 | **-** / **+** | Zoom lane 4 / 8 / 16 / 32 bars |
-| **Click overview / zoom** | Seek to position (snapped according to snap mode) |
-| **Drag overview / zoom** | Set loop region from drag start to drag end and enable loop |
+| **Click zoom** | Seek to position (snapped according to snap mode) |
+| **Drag zoom** | Set loop region from drag start to drag end and enable loop |
 | **Click phrase** | Seek to phrase start |
 | **Double-click phrase** | Loop phrase |
 

@@ -8,7 +8,7 @@ from typing import Optional
 import numpy as np
 
 from conga_player.engine import Engine
-from conga_player.peaks import overview_columns, zoom_peaks
+from conga_player.peaks import zoom_peaks
 from conga_player.songmap import Phrase, SongMap
 
 CANVAS_WIDTH = 1200
@@ -55,7 +55,7 @@ class CongaPlayerApp:
         # Build window
         self.root = tk.Tk()
         self.root.title(f"conga_player — {song_map.artist} - {song_map.title}")
-        self.root.geometry("1240x480")
+        self.root.geometry("1240x360")
         self.root.resizable(False, False)
         self.root.configure(bg="#0f172a")
 
@@ -109,33 +109,10 @@ class CongaPlayerApp:
             highlightthickness=1,
             highlightbackground="#1e293b",
         )
-        self.phrase_canvas.pack(pady=(0, 2))
+        self.phrase_canvas.pack(pady=(0, 4))
         self._draw_phrase_lane()
 
-        # B. Overview Waveform (h=90)
-        self.overview_canvas = tk.Canvas(
-            canvas_container,
-            width=CANVAS_WIDTH,
-            height=90,
-            bg="#090d16",
-            highlightthickness=1,
-            highlightbackground="#1e293b",
-        )
-        self.overview_canvas.pack(pady=2)
-        self._draw_overview_lane()
-
-        # C. Bars Ruler Lane (h=18)
-        self.bars_canvas = tk.Canvas(
-            canvas_container,
-            width=CANVAS_WIDTH,
-            height=18,
-            bg="#0f172a",
-            highlightthickness=0,
-        )
-        self.bars_canvas.pack(pady=(1, 4))
-        self._draw_bars_lane()
-
-        # D. Zoom Lane (h=110)
+        # B. Zoom Lane (h=110)
         self.zoom_canvas = tk.Canvas(
             canvas_container,
             width=CANVAS_WIDTH,
@@ -221,11 +198,8 @@ class CongaPlayerApp:
         self.status_lbl.pack(fill=tk.X)
 
         # Dynamic canvas items
-        self.overview_loop_rect = self.overview_canvas.create_rectangle(
-            0, 0, 0, 90, fill="#38bdf8", stipple="gray50", outline="#38bdf8", state="hidden"
-        )
-        self.overview_playhead = self.overview_canvas.create_line(
-            0, 0, 0, 90, fill="#ffffff", width=2
+        self.phrase_playhead = self.phrase_canvas.create_line(
+            0, 0, 0, 28, fill="#ffffff", width=2
         )
 
         self.zoom_loop_rect = self.zoom_canvas.create_rectangle(
@@ -266,45 +240,8 @@ class CongaPlayerApp:
                     tags=(tag, "phrase_text"),
                 )
 
-    def _draw_overview_lane(self) -> None:
-        # Pre-render 3-band waveform lines
-        dur = self.song_map.duration_s
-        if dur <= 0:
-            return
-
-        cols = overview_columns(self.song_map, CANVAS_WIDTH)
-        cy = 45.0
-        scale = 42.0 / 51.0
-
-        for x in range(CANVAS_WIDTH):
-            low = cols[x, 0] * scale
-            mid = cols[x, 1] * scale
-            high = cols[x, 2] * scale
-
-            # Draw 3-band layers from outer to core
-            if high > 1:
-                self.overview_canvas.create_line(x, cy - high, x, cy + high, fill="#38bdf8", width=1)
-            if mid > 1:
-                self.overview_canvas.create_line(x, cy - mid, x, cy + mid, fill="#eab308", width=1)
-            if low > 1:
-                self.overview_canvas.create_line(x, cy - low, x, cy + low, fill="#2563eb", width=1)
-
-    def _draw_bars_lane(self) -> None:
-        self.bars_canvas.delete("all")
-        dur = self.song_map.duration_s
-        if dur <= 0:
-            return
-
-        for i, bar_t in enumerate(self.song_map.bar_times_s):
-            x = (bar_t / dur) * CANVAS_WIDTH
-            bar_num = i + 1
-            if (bar_num - 1) % 16 == 0:
-                self.bars_canvas.create_line(x, 0, x, 14, fill="#94a3b8", width=1)
-                self.bars_canvas.create_text(
-                    x + 2, 7, text=str(bar_num), fill="#94a3b8", font=("Consolas", 8), anchor="w"
-                )
-            else:
-                self.bars_canvas.create_line(x, 0, x, 5, fill="#475569", width=1)
+        if hasattr(self, "phrase_playhead"):
+            self.phrase_canvas.tag_raise(self.phrase_playhead)
 
     def _update_zoom_lane(self, cur_pos_s: float, force_redraw: bool = False) -> None:
         cur_bar = self.song_map.bar_index_at(cur_pos_s)
@@ -341,12 +278,14 @@ class CongaPlayerApp:
         peaks = zoom_peaks(self.audio, self.sample_rate, t_start, t_end, CANVAS_WIDTH)
         cy = 55.0
         max_h = 48.0
-        for x in range(CANVAS_WIDTH):
-            h = peaks[x] * max_h
-            if h > 0.5:
-                self.zoom_canvas.create_line(
-                    x, cy - h, x, cy + h, fill="#38bdf8", width=1, tags="zoom_bg"
-                )
+        xs = np.arange(CANVAS_WIDTH, dtype=np.float32)
+        h = peaks * max_h
+        poly_xs = np.concatenate([xs, xs[::-1]])
+        poly_ys = np.concatenate([cy - h, cy + h[::-1]])
+        coords = np.empty((2 * len(poly_xs),), dtype=np.float32)
+        coords[0::2] = poly_xs
+        coords[1::2] = poly_ys
+        self.zoom_canvas.create_polygon(*coords, fill="#38bdf8", outline="", tags="zoom_bg")
 
         # 2. Bar and beat gridlines
         # Find all beats in [t_start, t_end]
@@ -390,11 +329,6 @@ class CongaPlayerApp:
         self.phrase_canvas.bind("<Button-1>", self._on_phrase_click)
         self.phrase_canvas.bind("<Double-Button-1>", self._on_phrase_double_click)
 
-        # Overview Canvas
-        self.overview_canvas.bind("<ButtonPress-1>", lambda e: self._on_drag_press(e, "overview"))
-        self.overview_canvas.bind("<B1-Motion>", lambda e: self._on_drag_motion(e, "overview"))
-        self.overview_canvas.bind("<ButtonRelease-1>", lambda e: self._on_drag_release(e, "overview"))
-
         # Zoom Canvas
         self.zoom_canvas.bind("<ButtonPress-1>", lambda e: self._on_drag_press(e, "zoom"))
         self.zoom_canvas.bind("<B1-Motion>", lambda e: self._on_drag_motion(e, "zoom"))
@@ -432,9 +366,7 @@ class CongaPlayerApp:
 
     def _x_to_time(self, x: float, canvas_name: str) -> float:
         x_clamped = max(0.0, min(float(x), float(CANVAS_WIDTH)))
-        if canvas_name == "overview":
-            return (x_clamped / CANVAS_WIDTH) * self.song_map.duration_s
-        elif canvas_name == "zoom":
+        if canvas_name == "zoom":
             dur = self._zoom_win_end - self._zoom_win_start
             return self._zoom_win_start + (x_clamped / CANVAS_WIDTH) * dur
         return 0.0
@@ -585,18 +517,10 @@ class CongaPlayerApp:
         self.btn_play.config(text="❚❚ Pause" if st.playing else "▶ Play")
         self.btn_loop.config(text="Loop: ON" if st.loop_enabled else "Loop: OFF")
 
-        # 1. Update Overview playhead & loop rect
+        # 1. Update Phrase lane playhead
         if dur > 0:
-            px = (st.position_s / dur) * CANVAS_WIDTH
-            self.overview_canvas.coords(self.overview_playhead, px, 0, px, 90)
-
-            if st.loop_enabled and st.loop_end_s > st.loop_start_s:
-                lx1 = (st.loop_start_s / dur) * CANVAS_WIDTH
-                lx2 = (st.loop_end_s / dur) * CANVAS_WIDTH
-                self.overview_canvas.coords(self.overview_loop_rect, lx1, 0, lx2, 90)
-                self.overview_canvas.itemconfig(self.overview_loop_rect, state="normal")
-            else:
-                self.overview_canvas.itemconfig(self.overview_loop_rect, state="hidden")
+            ppx = (st.position_s / dur) * CANVAS_WIDTH
+            self.phrase_canvas.coords(self.phrase_playhead, ppx, 0, ppx, 28)
 
         # 2. Update Zoom lane background & playhead
         self._update_zoom_lane(st.position_s)
@@ -616,7 +540,7 @@ class CongaPlayerApp:
             else:
                 self.zoom_canvas.itemconfig(self.zoom_loop_rect, state="hidden")
 
-        # 3. Update Status text
+        # 2. Update Status text
         mins = int(st.position_s // 60)
         secs = st.position_s % 60
         time_str = f"{mins:02d}:{secs:06.3f}"

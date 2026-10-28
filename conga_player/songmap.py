@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Optional
@@ -75,6 +75,11 @@ class SongMap:
     bar_first_beat: np.ndarray  # (M,) index into beat_times_s
     phrases: list[Phrase]
     preview_bands: np.ndarray  # (1200, 3) uint8 low/mid/high
+    phrase_starts_s: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+
+    def __post_init__(self) -> None:
+        if len(self.phrase_starts_s) == 0 and self.phrases:
+            self.phrase_starts_s = np.array([p.start_s for p in self.phrases], dtype=np.float64)
 
     def beat_index_at(self, t: float) -> int:
         """Return 0-based beat index active at time t (seconds)."""
@@ -92,11 +97,16 @@ class SongMap:
 
     def phrase_at(self, t: float) -> Optional[Phrase]:
         """Return the Phrase covering time t, or None if outside all phrases."""
-        for p in self.phrases:
-            if p.start_s <= t < p.end_s:
-                return p
-        if self.phrases and t == self.phrases[-1].end_s:
-            return self.phrases[-1]
+        if not self.phrases or len(self.phrase_starts_s) == 0:
+            return None
+        idx = int(np.searchsorted(self.phrase_starts_s, t, side="right") - 1)
+        if idx < 0:
+            return None
+        p = self.phrases[idx]
+        if p.start_s <= t < p.end_s:
+            return p
+        if idx == len(self.phrases) - 1 and t == p.end_s:
+            return p
         return None
 
     def snap(self, t: float, mode: str) -> float:
