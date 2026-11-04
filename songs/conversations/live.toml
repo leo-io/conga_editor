@@ -1,0 +1,33 @@
+# conga_player live session — edit & save, the player follows.
+# Units: bare numbers = BEATS (1-based, inclusive): [65, 96] = beat 65 through 96.
+#        { bars = [17, 24] }  { phrase = 8 }  ["2m40s", "2m50s"] / "02:40" / "160s"
+#        Any segment may add  repeat = N  (default 1).
+
+mode = "loop"  # "sequence" | "loop" | "free"
+playing = false
+volume_db = 0.0
+loop = { phrase = 2 }
+# loop = { bars = [17, 24] }        # used when mode = "loop"; UI loop actions write here
+
+segments = [                       # used when mode = "sequence"; plays in order, wraps
+    { phrase = 1 },  # Intro
+    { phrase = 2 },  # Up
+    { phrase = 3 },  # Outro
+    { phrase = 4 },  # Up
+    { phrase = 5 },  # Outro
+    { phrase = 6 },  # Down
+    { phrase = 7 },  # Up
+    { phrase = 8 },  # Down
+    { phrase = 9 },  # Kind 6
+]
+
+# ── Map (generated, for reference) ─────────────────────────────
+# phrase  1  Intro    beats    1–32    bars   1–8    (8 bars)
+# phrase  2  Up       beats   33–256   bars   9–64   (56 bars)
+# phrase  3  Outro    beats  257–368   bars  65–92   (28 bars)
+# phrase  4  Up       beats  369–384   bars  93–96   (4 bars)
+# phrase  5  Outro    beats  385–640   bars  97–160  (64 bars)
+# phrase  6  Down     beats  641–656   bars 161–164  (4 bars)
+# phrase  7  Up       beats  657–704   bars 165–176  (12 bars)
+# phrase  8  Down     beats  705–752   bars 177–188  (12 bars)
+# phrase  9  Kind 6   beats  753–768   bars 189–192  (4 bars)

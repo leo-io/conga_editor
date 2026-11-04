@@ -13,3 +13,5 @@ songs/**/*.flac
 songs/**/*.wav
 songs/**/*.mp3
 songs/**/*.m4a
+songs/**/*.aiff
+songs/**/*.aif

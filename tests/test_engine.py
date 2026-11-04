@@ -96,3 +96,108 @@ def test_non_looping_playback_stops_at_end():
     assert np.array_equal(block[0, :5], [15, 16, 17, 18, 19])
     assert np.all(block[0, 5:] == 0.0)
     assert not engine.state().playing
+
+
+# --- Region sequence tests ---
+
+
+def _seq_engine(declick_ms=0.0, frames=200):
+    audio = np.arange(frames, dtype=np.float32).reshape(1, frames)
+    return Engine(audio, sample_rate=1000, declick_ms=declick_ms)
+
+
+def test_three_regions_play_in_order_and_wrap():
+    engine = _seq_engine()
+    engine.set_sequence([(0.010, 0.013), (0.050, 0.052), (0.100, 0.104)])
+    engine.seek(0.010)
+    engine.play()
+
+    block = engine._next_block(12)
+    expected = [10, 11, 12, 50, 51, 100, 101, 102, 103, 10, 11, 12]
+    assert np.array_equal(block[0], expected)
+
+
+def test_repeat_expansion_plays_region_twice():
+    engine = _seq_engine()
+    engine.set_sequence([(0.010, 0.012), (0.010, 0.012), (0.030, 0.032)])
+    engine.seek(0.010)
+    engine.play()
+
+    block = engine._next_block(8)
+    assert np.array_equal(block[0], [10, 11, 10, 11, 30, 31, 10, 11])
+
+
+def test_block_straddling_region_boundary():
+    engine = _seq_engine()
+    engine.set_sequence([(0.010, 0.014), (0.050, 0.060)])
+    engine.seek(0.012)
+    engine.play()
+
+    block = engine._next_block(5)
+    assert np.array_equal(block[0], [12, 13, 50, 51, 52])
+
+
+def test_several_seams_in_one_block_are_declicked():
+    audio = np.ones((1, 200), dtype=np.float32)
+    engine = Engine(audio, sample_rate=1000, declick_ms=2.0)
+    engine.set_sequence([(0.010, 0.016), (0.050, 0.056), (0.100, 0.106)])
+    engine.seek(0.010)
+    engine.play()
+
+    block = engine._next_block(18)[0]
+    for seam in (6, 12):
+        assert block[seam - 1] < 1.0 and block[seam] < 1.0
+    assert block[3] == pytest.approx(1.0) and block[9] == pytest.approx(1.0)
+
+
+def test_set_sequence_inside_new_region_keeps_position():
+    engine = _seq_engine()
+    engine.seek(0.055)
+    engine.set_sequence([(0.010, 0.020), (0.050, 0.060)])
+    engine.play()
+
+    block = engine._next_block(7)
+    assert np.array_equal(block[0], [55, 56, 57, 58, 59, 10, 11])
+
+
+def test_set_sequence_outside_every_region_jumps_to_first():
+    engine = _seq_engine()
+    engine.seek(0.150)
+    engine.set_sequence([(0.010, 0.020), (0.050, 0.060)])
+    engine.play()
+
+    block = engine._next_block(3)
+    assert block[0, 1] == 11 and block[0, 2] == 12
+    assert engine.state().region_count == 2
+
+
+def test_empty_sequence_is_free_play():
+    engine = _seq_engine()
+    engine.set_sequence([(0.010, 0.020)])
+    engine.set_sequence([])
+    assert not engine.state().loop_enabled
+
+
+def test_playhead_maps_across_seam(monkeypatch):
+    import conga_player.engine as eng
+
+    clock = [100.0]
+    monkeypatch.setattr(eng.time, "monotonic", lambda: clock[0])
+
+    audio = np.arange(200, dtype=np.float32).reshape(1, 200)
+    engine = Engine(audio, sample_rate=1000, declick_ms=0.0, latency_offset_ms=0.0)
+    engine.set_sequence([(0.010, 0.014), (0.050, 0.060)])
+    engine.seek(0.010)
+    engine.play()
+
+    clock[0] = 100.010
+    engine._next_block(10)  # frames 10-13, then 50-55; block starts at t=100.010
+
+    # 1 ms into the block -> frame 11; 5 ms in -> 51 (after the seam)
+    clock[0] = 100.011
+    assert engine.state().position_s == pytest.approx(0.011)
+    assert engine.state().region_index == 0
+    clock[0] = 100.015
+    st = engine.state()
+    assert st.position_s == pytest.approx(0.051)
+    assert st.region_index == 1

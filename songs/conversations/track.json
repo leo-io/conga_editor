@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "trk_a6d8fcb013a7",
+  "artist": "KDY 97",
+  "title": "Conversations",
+  "artist_slug": "kdy_97",
+  "title_slug": "conversations",
+  "created": "2026-10-26T01:09:42",
+  "files": [
+    {
+      "role": "main",
+      "path": "conversations_kdy_97.flac",
+      "format": "flac",
+      "duration": 413.04,
+      "bitrate": 834780,
+      "sample_rate": 44100,
+      "bits": 16,
+      "original_path": "C:\\Users\\user\\music_library\\library\\_inbox\\_soulseek_downloads\\7a_112_conversations_kdy97.flac",
+      "batch": "20261026-010938",
+      "imported": "2026-10-26T01:09:42"
+    }
+  ],
+  "source_tags": {
+    "artist": "KDY 97",
+    "title": "Conversations"
+  }
+}

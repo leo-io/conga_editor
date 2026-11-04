@@ -1,0 +1,16 @@
+# conga_player live session — edit & save, the player follows.
+# Units: bare numbers = BEATS (1-based, inclusive): [65, 96] = beat 65 through 96.
+#        { bars = [17, 24] }  { phrase = 8 }  ["2m40s", "2m50s"] / "02:40" / "160s"
+#        Any segment may add  repeat = N  (default 1).
+
+mode = "loop"  # "sequence" | "loop" | "free"
+playing = false
+volume_db = 0.0
+loop = [797, 800]
+# loop = { bars = [17, 24] }        # used when mode = "loop"; UI loop actions write here
+
+segments = [                       # used when mode = "sequence"; plays in order, wraps
+    # no phrases in the beat_this beat map — use bars, e.g. { bars = [1, 8] }  (347 bars)
+]
+
+# ── Map (generated, for reference) ─────────────────────────────

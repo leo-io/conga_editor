@@ -1,3 +1,4 @@
 pedalboard==0.9.26
 numpy
 pytest
+tomlkit==0.13.2
