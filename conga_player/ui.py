@@ -6,6 +6,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk
 from typing import Optional
+
 import numpy as np
 
 from conga_player.engine import Engine
@@ -19,7 +20,7 @@ from conga_player.live import (
     region_to_segment_map,
 )
 from conga_player.peaks import zoom_peaks
-from conga_player.songmap import Phrase, SongMap
+from conga_player.songmap import SongMap
 from conga_player.toml_panel import TomlPanel
 
 CANVAS_WIDTH = 1200
@@ -76,8 +77,8 @@ class CongaPlayerApp:
         self._zoom_win_end = 1.0
 
         # Drag state for setting loops
-        self._drag_start_t: Optional[float] = None
-        self._dragging_canvas: Optional[str] = None
+        self._drag_start_t: float | None = None
+        self._dragging_canvas: str | None = None
 
         # Build window
         self.root = tk.Tk()
@@ -150,10 +151,10 @@ class CongaPlayerApp:
             highlightthickness=1,
             highlightbackground="#1e293b",
         )
-        self.phrase_canvas.pack(pady=(0, 2))
+        self.phrase_canvas.pack(pady=(0, 4))
         self._draw_phrase_lane()
 
-        # C. Bars Ruler Lane (h=18)
+        # B. Bars Ruler Lane (h=18)
         self.bars_canvas = tk.Canvas(
             canvas_container,
             width=CANVAS_WIDTH,
@@ -164,7 +165,7 @@ class CongaPlayerApp:
         self.bars_canvas.pack(pady=(1, 4))
         self._draw_bars_lane()
 
-        # D. Zoom Lane (h=110)
+        # C. Zoom Lane (h=110)
         self.zoom_canvas = tk.Canvas(
             canvas_container,
             width=CANVAS_WIDTH,
@@ -202,7 +203,8 @@ class CongaPlayerApp:
             )
             btn.pack(side=tk.LEFT, padx=2)
 
-        self.btn_phrase_loop = ttk.Button(ctrl_frame, text="⟲ Phrase", width=9, command=self._on_loop_phrase)
+        loop_btn_label = "⟲ Section" if self.song_map.has_grouped_sections else "⟲ Phrase"
+        self.btn_phrase_loop = ttk.Button(ctrl_frame, text=loop_btn_label, width=9, command=self._on_loop_phrase)
         self.btn_phrase_loop.pack(side=tk.LEFT, padx=4)
 
         ttk.Separator(ctrl_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
@@ -299,6 +301,9 @@ class CongaPlayerApp:
                     tags=(tag, "phrase_text"),
                 )
 
+        if hasattr(self, "phrase_playhead"):
+            self.phrase_canvas.tag_raise(self.phrase_playhead)
+
     def _draw_bars_lane(self) -> None:
         self.bars_canvas.delete("all")
         dur = self.song_map.duration_s
@@ -351,12 +356,14 @@ class CongaPlayerApp:
         peaks = zoom_peaks(self.audio, self.sample_rate, t_start, t_end, CANVAS_WIDTH)
         cy = 55.0
         max_h = 48.0
-        for x in range(CANVAS_WIDTH):
-            h = peaks[x] * max_h
-            if h > 0.5:
-                self.zoom_canvas.create_line(
-                    x, cy - h, x, cy + h, fill="#38bdf8", width=1, tags="zoom_bg"
-                )
+        xs = np.arange(CANVAS_WIDTH, dtype=np.float32)
+        h = peaks * max_h
+        poly_xs = np.concatenate([xs, xs[::-1]])
+        poly_ys = np.concatenate([cy - h, cy + h[::-1]])
+        coords = np.empty((2 * len(poly_xs),), dtype=np.float32)
+        coords[0::2] = poly_xs
+        coords[1::2] = poly_ys
+        self.zoom_canvas.create_polygon(*coords, fill="#38bdf8", outline="", tags="zoom_bg")
 
         # 2. Bar and beat gridlines
         # Find all beats in [t_start, t_end]
@@ -607,8 +614,9 @@ class CongaPlayerApp:
             self._set_loop(p.start_s, p.end_s, loop_spec_for_phrase(self.song_map, p))
 
     def _on_cycle_snap(self) -> None:
-        cur_idx = SNAP_MODES.index(self.snap_mode)
-        self.snap_mode = SNAP_MODES[(cur_idx + 1) % len(SNAP_MODES)]
+        modes = ["beat", "bar", "section", "off"] if self.song_map.has_grouped_sections else ["beat", "bar", "phrase", "off"]
+        cur_idx = modes.index(self.snap_mode) if self.snap_mode in modes else 0
+        self.snap_mode = modes[(cur_idx + 1) % len(modes)]
         self.btn_snap.config(text=f"Snap: {self.snap_mode.capitalize()}")
 
     def _on_zoom_in(self) -> None:
@@ -808,7 +816,13 @@ class CongaPlayerApp:
         beat_str = f"beat {beat_num}"
 
         p = self.song_map.phrase_at(st.position_s)
-        phrase_str = f"phrase {p.index}/{len(self.song_map.phrases)} {p.label}" if p else "phrase --"
+        if p:
+            if self.song_map.has_grouped_sections:
+                phrase_str = f"sec {p.index:02d}/{len(self.song_map.phrases):02d} {p.label} ({p.phrase_range_str})"
+            else:
+                phrase_str = f"phrase {p.index}/{len(self.song_map.phrases)} {p.label}"
+        else:
+            phrase_str = "sec --" if self.song_map.has_grouped_sections else "phrase --"
 
         seg_i = self._active_segment(st.region_index) if sequence else None
         if seg_i is not None and self._live_state is not None:

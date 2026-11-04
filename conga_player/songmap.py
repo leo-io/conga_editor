@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
-from typing import Optional
 import warnings
+from dataclasses import dataclass, field
+from pathlib import Path
+
 import numpy as np
 
 from conga_player.peaks import compute_fallback_preview_bands
@@ -42,13 +42,17 @@ MOOD_LABELS = {
 }
 
 
-def phrase_label(mood: int, kind: int) -> str:
-    """Return the display label for a phrase kind in a given mood."""
-    return MOOD_LABELS.get(mood, {}).get(kind, f"Kind {kind}")
+def phrase_label(mood: int, kind: int, k1: int = 0, k2: int = 0, k3: int = 0) -> str:
+    """Return the display label for a phrase or section kind in a given mood."""
+    labels = MOOD_LABELS.get(mood, {})
+    base = labels.get(kind, f"Kind {kind}")
+    if mood == 1 and k1:
+        return f"{base} {k1}"
+    return base
 
 
 @dataclass(frozen=True)
-class Phrase:
+class Section:
     index: int
     kind: int
     label: str
@@ -57,6 +61,113 @@ class Phrase:
     start_s: float
     end_s: float
     bars: float
+    start_phrase_index: int = 1
+    phrase_count: int = 1
+    beats: int = 0
+    fill: int = 0
+    beat_fill: int | None = None
+    k1: int = 0
+    k2: int = 0
+    k3: int = 0
+
+    @property
+    def end_phrase_index(self) -> int:
+        return self.start_phrase_index + self.phrase_count - 1
+
+    @property
+    def phrase_range_str(self) -> str:
+        if self.phrase_count <= 1:
+            return f"phrase {self.start_phrase_index}"
+        return f"phrases {self.start_phrase_index}-{self.end_phrase_index}"
+
+
+SongSection = Section
+Phrase = Section
+
+
+def group_phrases(
+    phrases: list[dict],
+    mood: int | None = None,
+    end_beat: int | None = None,
+) -> list[dict]:
+    """Group contiguous phrases with matching kind into macroscopic song sections.
+
+    Adjacent phrases in beat order are merged when:
+    - kind matches,
+    - the preceding section's end_beat equals the phrase's beat, and
+    - for mood == 1 (High), the variant flags (k1, k2, k3) also match.
+
+    The merged section retains the starting phrase's index as start_phrase_index,
+    numbers sections monotonically from 1 to N, sums the beat and bar counts,
+    and takes fill and beat_fill from the last phrase in the run.
+    """
+    if not phrases:
+        return []
+
+    sorted_phrases = sorted(phrases, key=lambda p: int(p.get("beat", 0)))
+    total_end = (
+        int(end_beat)
+        if end_beat is not None
+        else int(sorted_phrases[-1].get("beat", 0)) + 32
+    )
+
+    sections: list[dict] = []
+    for i, p in enumerate(sorted_phrases):
+        start_beat = int(p.get("beat", 0))
+        next_beat = (
+            int(sorted_phrases[i + 1].get("beat", 0))
+            if i + 1 < len(sorted_phrases)
+            else total_end
+        )
+        kind = int(p.get("kind", 0))
+        k1 = int(p.get("k1", 0))
+        k2 = int(p.get("k2", 0))
+        k3 = int(p.get("k3", 0))
+        fill = int(p.get("fill", 0))
+        raw_bfill = p.get("beat_fill", 0)
+        beat_fill = int(raw_bfill) if fill and raw_bfill else None
+
+        can_merge = False
+        if sections:
+            prev = sections[-1]
+            variants_match = (
+                (prev.get("k1") == k1 and prev.get("k2") == k2 and prev.get("k3") == k3)
+                if mood == 1
+                else True
+            )
+            if prev["kind"] == kind and prev["end_beat"] == start_beat and variants_match:
+                can_merge = True
+
+        if can_merge:
+            prev = sections[-1]
+            prev["end_beat"] = next_beat
+            prev["beats"] = prev["end_beat"] - prev["start_beat"]
+            prev["bars"] = round(prev["beats"] / 4.0, 2)
+            prev["phrase_count"] += 1
+            prev["fill"] = fill
+            prev["beat_fill"] = beat_fill
+        else:
+            beats = next_beat - start_beat
+            start_phrase_index = int(p.get("index", i + 1))
+            sections.append(
+                {
+                    "index": len(sections) + 1,
+                    "start_phrase_index": start_phrase_index,
+                    "kind": kind,
+                    "label": phrase_label(mood or 2, kind, k1, k2, k3),
+                    "start_beat": start_beat,
+                    "end_beat": next_beat,
+                    "beats": beats,
+                    "bars": round(beats / 4.0, 2),
+                    "phrase_count": 1,
+                    "fill": fill,
+                    "beat_fill": beat_fill,
+                    "k1": k1,
+                    "k2": k2,
+                    "k3": k3,
+                }
+            )
+    return sections
 
 
 @dataclass
@@ -73,9 +184,25 @@ class SongMap:
     beat_numbers: np.ndarray  # (N,) int8, 1..4
     bar_times_s: np.ndarray  # (M,) downbeats only
     bar_first_beat: np.ndarray  # (M,) index into beat_times_s
-    phrases: list[Phrase]
+    phrases: list[Section]
     preview_bands: np.ndarray  # (1200, 3) uint8 low/mid/high
+    raw_phrases: list[Section] = field(default_factory=list)
+    phrase_starts_s: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
     grid_source: str = "rekordbox"  # "rekordbox" | "beat_this"
+
+    def __post_init__(self) -> None:
+        if len(self.phrase_starts_s) == 0 and self.phrases:
+            self.phrase_starts_s = np.array([p.start_s for p in self.phrases], dtype=np.float64)
+
+    @property
+    def sections(self) -> list[Section]:
+        """Macroscopic song sections (grouped phrases or raw phrases if not grouped)."""
+        return self.phrases
+
+    @property
+    def has_grouped_sections(self) -> bool:
+        """True if sections are grouped phrases rather than 1:1 raw Rekordbox phrases."""
+        return bool(self.raw_phrases and len(self.phrases) != len(self.raw_phrases))
 
     def beat_index_at(self, t: float) -> int:
         """Return 0-based beat index active at time t (seconds)."""
@@ -91,19 +218,28 @@ class SongMap:
         idx = int(np.searchsorted(self.bar_times_s, t, side="right") - 1)
         return max(0, min(idx, len(self.bar_times_s) - 1))
 
-    def phrase_at(self, t: float) -> Optional[Phrase]:
-        """Return the Phrase covering time t, or None if outside all phrases."""
-        for p in self.phrases:
-            if p.start_s <= t < p.end_s:
-                return p
-        if self.phrases and t == self.phrases[-1].end_s:
-            return self.phrases[-1]
+    def phrase_at(self, t: float) -> Section | None:
+        """Return the Section/Phrase covering time t, or None if outside all."""
+        if not self.phrases or len(self.phrase_starts_s) == 0:
+            return None
+        idx = int(np.searchsorted(self.phrase_starts_s, t, side="right") - 1)
+        if idx < 0:
+            return None
+        p = self.phrases[idx]
+        if p.start_s <= t < p.end_s:
+            return p
+        if idx == len(self.phrases) - 1 and t == p.end_s:
+            return p
         return None
+
+    def section_at(self, t: float) -> Section | None:
+        """Alias for phrase_at."""
+        return self.phrase_at(t)
 
     def snap(self, t: float, mode: str) -> float:
         """Snap time t to the nearest boundary according to mode.
 
-        mode in {"beat", "bar", "phrase", "off"}.
+        mode in {"beat", "bar", "phrase", "section", "off"}.
         """
         mode = mode.lower()
         if mode == "off":
@@ -112,7 +248,7 @@ class SongMap:
             boundaries = self.beat_times_s
         elif mode == "bar":
             boundaries = self.bar_times_s
-        elif mode == "phrase":
+        elif mode in ("phrase", "section"):
             if not self.phrases:
                 return float(t)
             boundaries = np.array(
@@ -139,22 +275,10 @@ class SongMap:
             return float(right)
 
 
-DATA_SUBDIRS = ("_temp", "raw_analisys_data", ".")
-
-
-def _first_existing(folder: Path, name: str) -> Optional[Path]:
-    """Return folder/<subdir>/name for the first analysis subdir that has it."""
-    for sub in DATA_SUBDIRS:
-        cand = folder / sub / name
-        if cand.exists():
-            return cand
-    return None
-
-
 GRID_SOURCES = ("auto", "rekordbox", "beat_this")
 
 
-def find_beat_this_file(folder: Path) -> Optional[Path]:
+def find_beat_this_file(folder: Path) -> Path | None:
     """Return the first *.beats file in folder/beat_this (or folder itself)."""
     for sub in ("beat_this", "."):
         found = sorted((folder / sub).glob("*.beats"))
@@ -186,8 +310,10 @@ def parse_beat_this(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return beat_times_s, np.array(nums, dtype=np.int8)
 
 
-def _rekordbox_grid(dump: dict, duration_s: float) -> tuple[np.ndarray, np.ndarray, float, list[Phrase]]:
-    """Beat grid, BPM and phrases from a rekordbox track_dump."""
+def _rekordbox_grid(
+    dump: dict, duration_s: float
+) -> tuple[np.ndarray, np.ndarray, float, list[Section], list[Section]]:
+    """Beat grid, BPM, grouped sections and raw phrases from a rekordbox track_dump."""
     anlz = dump.get("anlz", {})
     dat_beats = anlz.get("DAT", {}).get("sections", {}).get("beat_grid", {}).get("beats", [])
     ext_beats = anlz.get("EXT", {}).get("sections", {}).get("extended_beat_grid", {}).get("beats", [])
@@ -208,7 +334,6 @@ def _rekordbox_grid(dump: dict, duration_s: float) -> tuple[np.ndarray, np.ndarr
     bpm = float(dat_beats[0]["tempo"] / 100.0) if dat_beats else 120.0
 
     bar_first_beat = np.where(beat_numbers == 1)[0]
-    bar_times_s = beat_times_s[bar_first_beat]
 
     # Verify 4/4
     if len(bar_first_beat) > 1:
@@ -216,68 +341,120 @@ def _rekordbox_grid(dump: dict, duration_s: float) -> tuple[np.ndarray, np.ndarr
         if not np.all(diffs == 4):
             warnings.warn(f"Track is not strictly 4/4: non-4 bar steps found: {set(diffs)}")
 
-    # Parse phrases from EXT song_sections (grouped sections) if available, fallback to song_structure
-    ext_sections = anlz.get("EXT", {}).get("sections", {})
+    def beat_to_time(beat_1based: int) -> float:
+        """Map 1-based beat number to time in seconds."""
+        if len(beat_times_s) == 0:
+            return 0.0
+        idx = beat_1based - 1
+        if idx < len(beat_times_s):
+            return float(beat_times_s[max(0, idx)])
+        if len(beat_times_s) > 1:
+            dt = float(beat_times_s[-1] - beat_times_s[-2])
+            return float(beat_times_s[-1] + (idx - (len(beat_times_s) - 1)) * dt)
+        return float(duration_s) if duration_s > 0 else float(beat_times_s[-1])
+
+    # Parse phrases from EXT song_structure
+    ext = anlz.get("EXT", {})
+    ext_sections = ext.get("sections", {})
     ss = ext_sections.get("song_structure", {})
     mood = ss.get("mood", 2)
     end_beat_total = ss.get("end_beat", len(beat_times_s))
-    raw_sections = ext_sections.get("song_sections", [])
+    raw_phrases_data = ss.get("phrases", [])
 
-    phrases: list[Phrase] = []
-    if raw_sections:
-        for i, s in enumerate(raw_sections):
-            start_beat = s["start_beat"]
-            end_beat = s["end_beat"]
-            start_s = float(beat_times_s[start_beat - 1])
-            end_s = float(beat_times_s[end_beat - 1]) if end_beat - 1 < len(beat_times_s) else float(duration_s)
-            bars = float(s.get("bars", (end_beat - start_beat) / 4.0))
-            label = phrase_label(mood, s["kind"])
+    # Parse raw Rekordbox phrases
+    raw_phrases: list[Section] = []
+    for i, p in enumerate(raw_phrases_data):
+        start_beat = int(p["beat"])
+        if i + 1 < len(raw_phrases_data):
+            end_beat = int(raw_phrases_data[i + 1]["beat"])
+        else:
+            end_beat = int(end_beat_total)
+
+        start_s = beat_to_time(start_beat)
+        end_s = beat_to_time(end_beat)
+        beats = end_beat - start_beat
+        bars = float(beats / 4.0)
+        k1 = int(p.get("k1", 0))
+        k2 = int(p.get("k2", 0))
+        k3 = int(p.get("k3", 0))
+        label = phrase_label(mood, int(p["kind"]), k1, k2, k3)
+        raw_phrases.append(
+            Section(
+                index=int(p.get("index", i + 1)),
+                kind=int(p["kind"]),
+                label=label,
+                start_beat=start_beat,
+                end_beat=end_beat,
+                start_s=start_s,
+                end_s=end_s,
+                bars=bars,
+                start_phrase_index=int(p.get("index", i + 1)),
+                phrase_count=1,
+                beats=beats,
+                fill=int(p.get("fill", 0)),
+                beat_fill=p.get("beat_fill"),
+                k1=k1,
+                k2=k2,
+                k3=k3,
+            )
+        )
+
+    # Check for new section mapping (grouped sections)
+    # 1. Derived song_structure sections (already formatted with labels)
+    # 2. Raw song_sections in EXT sections
+    sections_source = ext.get("derived", {}).get("song_structure", {}).get("sections")
+    if not sections_source:
+        sections_source = ext_sections.get("song_sections")
+
+    phrases: list[Section] = []
+    if sections_source:
+        for i, s in enumerate(sections_source):
+            start_beat = int(s["start_beat"])
+            end_beat = int(s["end_beat"])
+            start_s = beat_to_time(start_beat)
+            end_s = beat_to_time(end_beat)
+            beats = int(s.get("beats", end_beat - start_beat))
+            bars = float(s.get("bars", beats / 4.0))
+            k1 = int(s.get("k1", 0))
+            k2 = int(s.get("k2", 0))
+            k3 = int(s.get("k3", 0))
+            label = s.get("label") or phrase_label(mood, int(s["kind"]), k1, k2, k3)
+            sec_idx = int(s.get("index", i + 1))
+            start_phrase_idx = int(s.get("start_phrase_index", sec_idx))
+            phrase_cnt = int(s.get("phrase_count", 1))
+
             phrases.append(
-                Phrase(
-                    index=s.get("index", i + 1),
-                    kind=s["kind"],
+                Section(
+                    index=sec_idx,
+                    kind=int(s["kind"]),
                     label=label,
                     start_beat=start_beat,
                     end_beat=end_beat,
                     start_s=start_s,
                     end_s=end_s,
                     bars=bars,
+                    start_phrase_index=start_phrase_idx,
+                    phrase_count=phrase_cnt,
+                    beats=beats,
+                    fill=int(s.get("fill", 0)),
+                    beat_fill=s.get("beat_fill"),
+                    k1=k1,
+                    k2=k2,
+                    k3=k3,
                 )
             )
     else:
-        raw_phrases = ss.get("phrases", [])
-        for i, p in enumerate(raw_phrases):
-            start_beat = p["beat"]
-            if i + 1 < len(raw_phrases):
-                end_beat = raw_phrases[i + 1]["beat"]
-            else:
-                end_beat = end_beat_total
+        # Fallback to raw phrases if no grouped sections exist
+        phrases = raw_phrases
 
-            start_s = float(beat_times_s[start_beat - 1])
-            end_s = float(beat_times_s[end_beat - 1])
-            bars = float((end_beat - start_beat) / 4.0)
-            label = phrase_label(mood, p["kind"])
-            phrases.append(
-                Phrase(
-                    index=p.get("index", i + 1),
-                    kind=p["kind"],
-                    label=label,
-                    start_beat=start_beat,
-                    end_beat=end_beat,
-                    start_s=start_s,
-                    end_s=end_s,
-                    bars=bars,
-                )
-            )
-
-    return beat_times_s, beat_numbers, bpm, phrases
+    return beat_times_s, beat_numbers, bpm, phrases, raw_phrases
 
 
 def load_song(folder: Path | str, grid: str = "auto") -> SongMap:
     """Load song metadata, beat grid, song structure, and preview bands from folder.
 
     grid selects where beats/bars/phrases come from:
-      "rekordbox" — track_dump.json (beat grid + phrase analysis)
+      "rekordbox" — track_dump.json (beat grid + phrases/sections)
       "beat_this" — beat_this/*.beats (beats, downbeats and bars only; no phrases)
       "auto"      — rekordbox if track_dump.json exists, otherwise beat_this
     Metadata (key, title, …) and the waveform preview still come from the rekordbox
@@ -290,12 +467,16 @@ def load_song(folder: Path | str, grid: str = "auto") -> SongMap:
     if grid not in GRID_SOURCES:
         raise ValueError(f"grid must be one of {', '.join(GRID_SOURCES)}, got {grid!r}")
 
+    # If user pointed to an analysis subfolder, ascend to track root
+    if folder.name in ("raw_analisys_data", "raw_analysis_data", "_temp", "analysis") or not (folder / "track.json").exists() and (folder.parent / "track.json").exists():
+        folder = folder.parent
+
     # Read track.json if present
     track_meta_path = folder / "track.json"
     artist = ""
     title = ""
     slug = folder.name
-    audio_path: Optional[Path] = None
+    audio_path: Path | None = None
     sample_rate = 44100
     duration_s = 0.0
 
@@ -328,14 +509,25 @@ def load_song(folder: Path | str, grid: str = "auto") -> SongMap:
     if audio_path is None:
         raise FileNotFoundError(f"No audio file found in {folder}")
 
-    # Locate track_dump.json (required for the rekordbox grid, optional metadata otherwise)
-    dump_path = _first_existing(folder, "track_dump.json")
+    # Locate track_dump.json
+    dump_candidates = [
+        folder / "raw_analisys_data" / "track_dump.json",
+        folder / "raw_analysis_data" / "track_dump.json",
+        folder / "_temp" / "track_dump.json",
+        folder / "track_dump.json",
+    ]
+    dump_path = None
+    for cand in dump_candidates:
+        if cand.exists():
+            dump_path = cand
+            break
+
     beats_path = find_beat_this_file(folder)
     if grid == "auto":
         grid = "rekordbox" if dump_path is not None else "beat_this"
     if grid == "rekordbox" and dump_path is None:
         raise FileNotFoundError(
-            f"Cannot find track_dump.json in {folder}, {folder / '_temp'} or {folder / 'raw_analisys_data'}"
+            f"Cannot find track_dump.json in {folder} (checked root, raw_analisys_data, raw_analysis_data, _temp)"
         )
     if grid == "beat_this" and beats_path is None:
         raise FileNotFoundError(f"Cannot find a beat_this *.beats file in {folder / 'beat_this'} or {folder}")
@@ -356,8 +548,9 @@ def load_song(folder: Path | str, grid: str = "auto") -> SongMap:
     if trk_info.get("sample_rate"):
         sample_rate = int(trk_info["sample_rate"])
 
+    raw_phrases: list[Section] = []
     if grid == "rekordbox":
-        beat_times_s, beat_numbers, bpm, phrases = _rekordbox_grid(dump, duration_s)
+        beat_times_s, beat_numbers, bpm, phrases, raw_phrases = _rekordbox_grid(dump, duration_s)
     else:
         beat_times_s, beat_numbers = parse_beat_this(beats_path)
         phrases = []
@@ -367,7 +560,17 @@ def load_song(folder: Path | str, grid: str = "auto") -> SongMap:
     bar_times_s = beat_times_s[bar_first_beat]
 
     # 3-band preview bands
-    preview_path = _first_existing(folder, "anlz.EX2.waveform_3band_preview.data.json")
+    preview_candidates = [
+        folder / "raw_analisys_data" / "anlz.EX2.waveform_3band_preview.data.json",
+        folder / "raw_analysis_data" / "anlz.EX2.waveform_3band_preview.data.json",
+        folder / "_temp" / "anlz.EX2.waveform_3band_preview.data.json",
+        folder / "anlz.EX2.waveform_3band_preview.data.json",
+    ]
+    preview_path = None
+    for cand in preview_candidates:
+        if cand.exists():
+            preview_path = cand
+            break
 
     if preview_path is not None:
         with open(preview_path, "r", encoding="utf-8") as f:
@@ -397,5 +600,6 @@ def load_song(folder: Path | str, grid: str = "auto") -> SongMap:
         bar_first_beat=bar_first_beat,
         phrases=phrases,
         preview_bands=preview_bands,
+        raw_phrases=raw_phrases,
         grid_source=grid,
     )

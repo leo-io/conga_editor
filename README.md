@@ -6,7 +6,7 @@ Beat- and phrase-mapped desktop audio player built on `pedalboard` for practisin
 
 - **Direct rekordbox dump ingestion**: Reads `track.json` and `_temp/track_dump.json` directly from the song directory.
 - **Beat & Bar accurate navigation**: 3-lane display:
-  - Phrase lane (mood-aware colored phrase blocks) with loop/segment shading and playhead
+  - Phrase lane (mood-aware colored phrase blocks, grouped into song sections when the dump has them) with loop/segment shading and playhead
   - Bar ruler with 16-bar markers
   - Zoom lane (4, 8, 16, or 32 bars) centered on the playhead with peak waveform and beat gridlines
 - **Instant looping & seeking**: Sample-exact seamless looping with automated declick fades at seam transitions.
